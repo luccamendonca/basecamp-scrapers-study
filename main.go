@@ -26,7 +26,7 @@ var sel = map[string]string{
 	"chapterPageRemoveFooter": "footer.footer",
 }
 
-const baseURL = "https://basecamp.com/"
+const baseURL = "https://basecamp.com"
 
 type Book struct {
 	Summary     Summary
@@ -50,6 +50,27 @@ type Chapter struct {
 	Title   string
 	Content string
 	URL     string
+}
+
+func convertToFilename(s string) string {
+	return strings.ReplaceAll(s, " ", "_")
+}
+
+func createEpub(b *Book) *epub.Epub {
+	e := epub.NewEpub(b.Title)
+	e.SetAuthor(strings.Join(b.Authors[:], ", "))
+	e.SetDescription(b.Description)
+
+	for _, section := range b.Summary.Sections {
+		sFilename := convertToFilename(section.Title)
+		e.AddSection("", section.Title, sFilename, "")
+		for _, chapter := range section.Chapters {
+			cFilename := convertToFilename(chapter.Title)
+			e.AddSubSection(sFilename, chapter.Content, chapter.Title, cFilename, "")
+		}
+	}
+
+	return e
 }
 
 func chapterTitleToNumber(title string) int {
@@ -84,30 +105,13 @@ func (s *Section) buildChapters(c *colly.Collector, e *colly.HTMLElement) {
 		chapter := Chapter{}
 		BuildChapter(&chapter, colChapter, e)
 		s.Chapters[chapter.Number] = chapter
+
+		fmt.Printf("-------- BUILD CHAPTER: %s\n", chapter.Title)
 	})
 
-	repr.Println(s)
-}
-
-func convertToFilename(s string) string {
-	return strings.ReplaceAll(s, " ", "_")
-}
-
-func createEpub(b *Book) *epub.Epub {
-	e := epub.NewEpub(b.Title)
-	e.SetAuthor(strings.Join(b.Authors[:], ", "))
-	e.SetDescription(b.Description)
-
-	for _, section := range b.Summary.Sections {
-		sFilename := convertToFilename(section.Title)
-		e.AddSection("", section.Title, sFilename, "")
-		for _, chapter := range section.Chapters {
-			cFilename := convertToFilename(chapter.Title)
-			e.AddSubSection(sFilename, chapter.Content, chapter.Title, cFilename, "")
-		}
-	}
-
-	return e
+	colChapter.OnRequest(func(r *colly.Request) {
+		fmt.Println("CHAPTER -- Visiting", r.URL.String())
+	})
 }
 
 func main() {
@@ -117,26 +121,33 @@ func main() {
 	book.Summary = Summary{}
 	book.Summary.Sections = make(map[int]Section)
 
-	i := 1
+	// sectionCount := 1
 	// c.OnHTML(sel["section"], func(e *colly.HTMLElement) {
-	c.OnHTML(sel["section"], func(e *colly.HTMLElement) {
-		section := Section{}
-		section.Title = e.ChildText(sel["sectionTitle"])
-		section.Number = i
+	c.OnHTML(sel["mainContent"], func(rootElm *colly.HTMLElement) {
+		book.Title = rootElm.ChildText("h1.landing-title")
+		book.Description = rootElm.ChildText("p.landing-subtitle")
 
-		section.buildChapters(c, e)
-		book.Summary.Sections[i] = section
+		rootElm.ForEach(sel["section"], func(sectionCount int, e *colly.HTMLElement) {
+			sectionCount++
+			section := Section{}
+			section.Title = e.ChildText(sel["sectionTitle"])
+			section.Number = sectionCount
 
-		if i > 1 {
-			epub := createEpub(&book)
-			err := epub.Write("getting_real.epub")
+			fmt.Printf("----- BUILD SECTION: %s\n", section.Title)
 
-			repr.Println(err)
+			section.buildChapters(c, e)
+			book.Summary.Sections[sectionCount] = section
 
-			return
-		}
+			// if sectionCount == len(book.Summary.Sections) {
+			// }
+		})
 
-		i++
+		epub := createEpub(&book)
+		err := epub.Write("getting_real.epub")
+		repr.Println(err)
+		panic("PANIQUEI")
+
+		// sectionCount++
 	})
 
 	c.OnRequest(func(r *colly.Request) {
